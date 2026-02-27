@@ -2,6 +2,9 @@
 
 A minimal bare-metal C++20 demo for the **STM32F429I-DISCO** development board
 that integrates three embedded libraries via **CMake**:
+The demo is compilable using clang. While pigweed is clang ready, unfortunately modm is not, so it required a bunch of
+ugly patches in the CMakeLists.txt. It would be a better idea to use gcc instead, since pigweed is gcc friendly too,
+but i just wanted to do some testing on clang on embedded for educational purpose. 
 
 | Library | Role in this demo |
 |---------|-------------------|
