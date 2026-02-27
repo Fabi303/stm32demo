@@ -160,16 +160,35 @@ foreach(_file ${_delay_impl} ${_delay_ns})
 endforeach()
 
 # ── modm Atomic-Fix für Clang ────────────────────────────────────────────────
+# Clang already provides __atomic_is_lock_free as a compiler builtin; redefining
+# it causes a hard error.  Wrap the entire GCC atomic shim so Clang never sees it.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(_atomic_file "${MODM_GENERATED_DIR}/ext/gcc/atomic.cpp")
-    
+
     if(EXISTS "${_atomic_file}")
-        message(STATUS "Disabling GCC atomics in ${_atomic_file} for Clang...")
-        
-        # Wir setzen die gesamte Datei einfach in einen riesigen #ifndef Kommentar
         file(READ "${_atomic_file}" _atomic_content)
-        set(_atomic_new_content "#ifndef __clang__\n${_atomic_content}\n#endif")
-        file(WRITE "${_atomic_file}" "${_atomic_new_content}")
+        # Idempotency guard: only patch if the sentinel is not already present.
+        if(NOT _atomic_content MATCHES "^#ifndef __clang__")
+            message(STATUS "Disabling GCC atomics in ${_atomic_file} for Clang...")
+            file(WRITE "${_atomic_file}" "#ifndef __clang__\n${_atomic_content}\n#endif\n")
+        endif()
+    endif()
+endif()
+
+# ── modm tolerance.hpp Fix for Clang constexpr ────────────────────────────────
+# std::abs(double) is not constexpr in libc++ (used by Clang/ATfE), so
+# isValueInTolerance() fails to compile in constexpr contexts.  Replace with
+# __builtin_fabs which is constexpr in both GCC and Clang.
+set(_tolerance_file "${MODM_GENERATED_DIR}/src/modm/math/tolerance.hpp")
+if(EXISTS "${_tolerance_file}")
+    file(READ "${_tolerance_file}" _tol_content)
+    if(_tol_content MATCHES "std::abs")
+        message(STATUS "Patching ${_tolerance_file}: std::abs -> __builtin_fabs for Clang constexpr...")
+        string(REPLACE
+            "return std::abs(1.0 - double(actual) / double(reference)) <= std::abs(double(tolerance));"
+            "return __builtin_fabs(1.0 - double(actual) / double(reference)) <= __builtin_fabs(double(tolerance));"
+            _tol_content "${_tol_content}")
+        file(WRITE "${_tolerance_file}" "${_tol_content}")
     endif()
 endif()
 
