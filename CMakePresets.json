@@ -1,0 +1,118 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/toolchain/arm-none-eabi.cmake",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "base-clang",
+            "hidden": true,
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/toolchain/arm-clang.cmake",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "debug",
+            "displayName": "ARM Debug",
+            "description": "Debug build for STM32F429I-DISCO (no optimisation, full debug info)",
+            "inherits": "base",
+            "binaryDir": "${sourceDir}/build/debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "ARM Release",
+            "description": "Release build for STM32F429I-DISCO (-Os, LTO)",
+            "inherits": "base",
+            "binaryDir": "${sourceDir}/build/release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "minsizerel",
+            "displayName": "ARM MinSizeRel",
+            "description": "Minimum-size release build for STM32F429I-DISCO",
+            "inherits": "base",
+            "binaryDir": "${sourceDir}/build/minsizerel",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "MinSizeRel"
+            }
+        },
+        {
+            "name": "clang-debug",
+            "displayName": "ARM Clang Debug",
+            "description": "Debug build using ATfE Clang 21 for STM32F429I-DISCO",
+            "inherits": "base-clang",
+            "binaryDir": "${sourceDir}/build/clang-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "clang-release",
+            "displayName": "ARM Clang Release",
+            "description": "Release build using ATfE Clang 21 for STM32F429I-DISCO",
+            "inherits": "base-clang",
+            "binaryDir": "${sourceDir}/build/clang-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "clang-minsizerel",
+            "displayName": "ARM Clang MinSizeRel",
+            "description": "Minimum-size release build using ATfE Clang 21 for STM32F429I-DISCO",
+            "inherits": "base-clang",
+            "binaryDir": "${sourceDir}/build/clang-minsizerel",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "MinSizeRel"
+            }
+        }
+    ],
+
+    "buildPresets": [
+        {
+            "name": "debug",
+            "displayName": "Build Debug",
+            "configurePreset": "debug"
+        },
+        {
+            "name": "release",
+            "displayName": "Build Release",
+            "configurePreset": "release"
+        },
+        {
+            "name": "minsizerel",
+            "displayName": "Build MinSizeRel",
+            "configurePreset": "minsizerel"
+        },
+        {
+            "name": "clang-debug",
+            "displayName": "Build Clang Debug",
+            "configurePreset": "clang-debug"
+        },
+        {
+            "name": "clang-release",
+            "displayName": "Build Clang Release",
+            "configurePreset": "clang-release"
+        },
+        {
+            "name": "clang-minsizerel",
+            "displayName": "Build Clang MinSizeRel",
+            "configurePreset": "clang-minsizerel"
+        }
+    ]
+}

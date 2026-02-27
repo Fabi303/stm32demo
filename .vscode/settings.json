@@ -1,0 +1,12 @@
+{
+    // ── CMake Tools ────────────────────────────────────────────────────────────
+    // Use CMakePresets.json exclusively; never auto-scan for kits or generators.
+    "cmake.useCMakePresets": "always",
+
+    // ── ESP-IDF extension ──────────────────────────────────────────────────────
+    // Disable ESP-IDF CMake and IntelliSense integration for this workspace so
+    // it doesn't inject its toolchain, IDF_PATH, or compile-commands into the
+    // STM32 build.
+    "idf.enableCMakeintegration": false,
+    "idf.disableIdfIntelliSenseIntegration": true
+}
