@@ -224,6 +224,30 @@ build time.  The GNU build ID is deterministic for the same binary — two
 builds from the same source and toolchain produce the same ID, while any
 change (including a new commit) produces a different one.
 
+### Structured ELF section
+
+In addition to being logged at boot, the metadata is stored in a dedicated
+`.build_metadata` ELF section (`src/build_metadata.cc`) as a 71-byte packed
+struct.  A CRC-32 field (IEEE 802.3 polynomial, identical to Python's
+`zlib.crc32()`) is computed **at compile time** by a `constexpr` lambda — no
+post-build patching or linker magic required.  The host-side script verifies
+the checksum and exits non-zero on mismatch:
+
+```bash
+python tools/read_build_meta.py build/debug/stm32f429i_demo
+```
+
+```
+Commit : 40a38ab @ main
+Branch : main
+Built  : Feb 28 2026 14:23:07
+CRC32  : 0x4a7c91f2  OK
+```
+
+The script uses only Python stdlib — `zlib`, `struct`, and `subprocess` — and
+calls `arm-none-eabi-objcopy --only-section=.build_metadata` to extract the
+raw bytes, so no `pyelftools` or other packages are needed.
+
 ## Project Structure
 
 ```
@@ -237,10 +261,13 @@ stm32demo/
 │   └── arm-none-eabi.cmake # cross-compilation toolchain file
 ├── src/
 │   ├── main.cpp                  # application entry point
+│   ├── build_metadata.cc         # packed struct in .build_metadata ELF section + constexpr CRC-32
 │   ├── log_backend.cc            # pw_sys_io backend (WriteByte → UART1)
 │   ├── log_tokenized_handler.cc  # pw_log_tokenized handler ($-Base64 over UART)
 │   └── pw_assert_backend/
 │       └── assert_backend.cc     # pw_assert_basic backend (safe-halt)
+├── tools/
+│   └── read_build_meta.py        # host script: extract + CRC-verify .build_metadata
 └── ext/
     ├── modm/               # git submodule – modm source + lbuild recipes
     └── pigweed/            # git submodule – Pigweed source

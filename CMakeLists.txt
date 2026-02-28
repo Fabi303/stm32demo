@@ -424,7 +424,13 @@ if(NOT TARGET project_options)
 endif()
 
 # ── 4. Application ────────────────────────────────────────────────────────────
-add_executable(${PROJECT_NAME} src/main.cpp)
+add_executable(${PROJECT_NAME}
+    src/main.cpp
+    # Packed struct in .build_metadata ELF section: git hash, branch, dirty
+    # flag, build date/time, and a constexpr CRC-32 for host-side verification.
+    # Extracted with: python tools/read_build_meta.py build/debug/stm32f429i_demo
+    src/build_metadata.cc
+)
 
 # ── Git metadata header (regenerated on every build) ─────────────────────────
 # cmake/GenGitInfo.cmake runs git at build time and writes:
