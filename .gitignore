@@ -1,3 +1,4 @@
 build/*
 modm/*
 project.xml.log
+.claude/*
