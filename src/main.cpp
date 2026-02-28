@@ -1,10 +1,23 @@
 /**
  * STM32F429I-DISCO Demo (Clang/Pigweed/modm/ETL)
+ *
+ * Logging uses pw_log_tokenized: format strings are replaced by 32-bit tokens
+ * at compile time and transmitted as $-prefixed Base64 over UART at runtime.
+ *
+ * To decode the live output:
+ *   python -m pw_tokenizer.database create \
+ *       --database tokens.csv <build>/stm32f429i_demo
+ *   python -m pw_tokenizer.detokenize \
+ *       --database tokens.csv serial --device /dev/ttyACM0 --baud 115200
  */
 
 #include <modm/board.hpp>
 
 // ── Pigweed ──────────────────────────────────────────────────────────────────
+// Override the default tokenized log format (■msg♦…■module♦…■file♦…) with a
+// compact "[MODULE] message" string.  Must be defined before pw_log/log.h pulls
+// in pw_log_tokenized/config.h which guards this macro with #ifndef.
+#define PW_LOG_TOKENIZED_FORMAT_STRING(module, message) "[" module "] " message
 #include "pw_log/log.h"
 #include "pw_assert/check.h"
 #include "pw_status/status.h"
@@ -15,7 +28,6 @@
 #include <etl/string.h>
 #include <etl/numeric.h>
 
-// Fix für Clang: Vorherige Definition von Pigweed aufheben, um Warnung zu vermeiden
 #undef PW_LOG_MODULE_NAME
 #define PW_LOG_MODULE_NAME "DEMO"
 

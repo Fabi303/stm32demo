@@ -324,11 +324,15 @@ FetchContent_MakeAvailable(etl)   # exports target: etl::etl
 # build system.  Only the modules consumed by this demo are listed.
 #
 # Backend wiring:
-#   pw_log   -> pw_log_basic  (macro expands to pw_log_basic_HandleMessage)
+#   pw_log   -> pw_log_tokenized  (strings tokenised at compile-time;
+#                                  binary payload emitted as $-prefixed Base64
+#                                  by src/log_tokenized_handler.cc)
 #   pw_assert -> pw_assert_basic (macro calls pw_assert_HandleFailure)
 #
-# Both backends are implemented in src/log_backend.cc / src/assert_backend.cc
-# and forward output to modm's UART1.
+# Log output is in the standard Pigweed on-wire format so the host can decode
+# it with:
+#   python -m pw_tokenizer.detokenize \
+#       --database <build>/stm32f429i_demo serial --device /dev/ttyACM0
 
 set(PIGWEED_ROOT "${CMAKE_SOURCE_DIR}/ext/pigweed")
 
@@ -341,7 +345,7 @@ endif()
 # Collect the public include trees for the Pigweed modules we use.
 # The ordering of public_overrides directories matters: they shadow the
 # generic pw_log_backend/ and pw_assert_backend/ virtual headers with the
-# concrete pw_log_basic / pw_assert_basic implementations.
+# concrete pw_log_tokenized / pw_assert_basic implementations.
 set(PIGWEED_INCLUDE_DIRS
     # Fuchsia stdcompat (provides lib/stdcompat/bit.h, optional.h, etc.)
     "${PIGWEED_ROOT}/third_party/fuchsia/repo/sdk/lib/stdcompat/include"
@@ -354,17 +358,18 @@ set(PIGWEED_INCLUDE_DIRS
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${PIGWEED_ROOT}/pw_assert_basic/public_overrides"
     "${PIGWEED_ROOT}/pw_assert_basic/public"
-    "${PIGWEED_ROOT}/pw_log_basic/public_overrides"
-    "${PIGWEED_ROOT}/pw_log_basic/public"
+    # pw_log_tokenized overrides pw_log_backend/log_backend.h to use tokenization
+    "${PIGWEED_ROOT}/pw_log_tokenized/public_overrides"
+    "${PIGWEED_ROOT}/pw_log_tokenized/public"
+    # pw_tokenizer: compile-time string-to-token hashing + runtime arg encoding
+    "${PIGWEED_ROOT}/pw_tokenizer/public"
 
-    # pw_sys_io facade (our log_backend.cc implements the backend)
+    # pw_sys_io facade (log_backend.cc implements WriteByte → modm UART)
     "${PIGWEED_ROOT}/pw_sys_io/public"
-    # pw_bytes (pulled in by pw_sys_io/sys_io.h)
+    # pw_bytes (pulled in by pw_sys_io/sys_io.h and pw_varint)
     "${PIGWEED_ROOT}/pw_bytes/public"
-    # pw_log_basic internal config header (needed by log_basic.cc)
-    "${PIGWEED_ROOT}/pw_log_basic"
 
-    # Module
+    # Modules
     "${PIGWEED_ROOT}/pw_assert/public"
     "${PIGWEED_ROOT}/pw_containers/public"
     "${PIGWEED_ROOT}/pw_log/public"
@@ -378,12 +383,17 @@ set(PIGWEED_INCLUDE_DIRS
 
 # Library that bundles Pigweed headers + our two backend implementations
 add_library(pigweed_backends STATIC
-    # Our pw_sys_io backend – routes all Pigweed I/O to modm UART.
+    # pw_sys_io backend: WriteByte → Board::stlink::Uart (used by handler)
     src/log_backend.cc
     src/pw_assert_backend/assert_backend.cc
-    # pw_log_basic owns pw_Log() which PW_LOG_* expands to; it calls
-    # pw::sys_io::WriteLine() provided by log_backend.cc above.
-    "${PIGWEED_ROOT}/pw_log_basic/log_basic.cc"
+    # pw_log_tokenized: _pw_log_tokenized_EncodeTokenizedLog() called by the
+    # PW_HANDLE_LOG macro; encodes args and calls pw_log_tokenized_HandleLog().
+    "${PIGWEED_ROOT}/pw_log_tokenized/log_tokenized.cc"
+    # Our handler: emits $-prefixed Base64 of each tokenized message over UART.
+    src/log_tokenized_handler.cc
+    # pw_tokenizer runtime: varint-encodes printf-style args into the payload.
+    "${PIGWEED_ROOT}/pw_tokenizer/encode_args.cc"
+    "${PIGWEED_ROOT}/pw_varint/varint.cc"
     # pw_sys_io facade: provides ReadBytes/WriteBytes on top of our WriteByte.
     "${PIGWEED_ROOT}/pw_sys_io/sys_io.cc"
     "${PIGWEED_ROOT}/pw_status/status.cc"
@@ -440,4 +450,43 @@ if(CMAKE_OBJCOPY AND CMAKE_SIZE)
         COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${PROJECT_NAME}>
         COMMENT "Generating ${PROJECT_NAME}.bin / .hex and reporting size"
     )
+endif()
+
+# ── 6. Post-build: extract pw_tokenizer token database ───────────────────────
+# Reads the .pw_tokenizer.entries ELF section and writes a CSV database of
+# token→string pairs into the build directory.  The database is used by the
+# host-side detokenizer to decode $-prefixed Base64 messages from the UART.
+#
+# Usage after build:
+#   python -m pw_tokenizer.detokenize \
+#       --database <build>/${PROJECT_NAME}.tokens.csv \
+#       serial --device /dev/ttyACM0 --baud 115200
+
+# Output path as a plain variable (no generator expression) so it works
+# correctly in cross-compile builds where TARGET_FILE_DIR is unavailable
+# inside BYPRODUCTS.
+set(_TOKENS_CSV "${CMAKE_BINARY_DIR}/${PROJECT_NAME}.tokens.csv")
+
+# Use CMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER (already set by the toolchain)
+# so find_package finds the host Python, not an ARM-sysroot one.
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_FOUND)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E env
+                "PYTHONPATH=${PIGWEED_ROOT}/pw_tokenizer/py"
+                ${Python3_EXECUTABLE}
+                -m pw_tokenizer.database create
+                --force --database "${_TOKENS_CSV}"
+                $<TARGET_FILE:${PROJECT_NAME}>
+        BYPRODUCTS "${_TOKENS_CSV}"
+        COMMENT "Extracting pw_tokenizer token database → ${PROJECT_NAME}.tokens.csv"
+    )
+else()
+    message(WARNING
+        "Python3 not found – skipping automatic token database generation.\n"
+        "Run manually after build:\n"
+        "  PYTHONPATH=${PIGWEED_ROOT}/pw_tokenizer/py \\\n"
+        "  python3 -m pw_tokenizer.database create \\\n"
+        "      --database ${_TOKENS_CSV} \\\n"
+        "      ${CMAKE_BINARY_DIR}/${PROJECT_NAME}")
 endif()

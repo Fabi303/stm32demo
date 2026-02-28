@@ -9,7 +9,7 @@ but i just wanted to do some testing on clang on embedded for educational purpos
 | Library | Role in this demo |
 |---------|-------------------|
 | **[modm](https://modm.io)** | Hardware abstraction – board init, GPIO (LEDs), UART1, SysTick delay |
-| **[Pigweed](https://pigweed.dev)** | `pw_log` structured logging, `pw_assert` safe-halt, `pw_status` / `pw_span` |
+| **[Pigweed](https://pigweed.dev)** | `pw_log_tokenized` – compact binary logging, `pw_assert` safe-halt, `pw_status` / `pw_span` |
 | **[ETL](https://www.etlcpp.com)** | `etl::vector` and `etl::string` – static containers, zero heap |
 
 ## Hardware
@@ -92,6 +92,119 @@ openocd -f board/stm32f429disc1.cfg \
         -c "program build/debug/stm32f429i_demo.hex verify reset exit"
 ```
 
+### 6 – Read the log output
+
+See [Tokenized Logging](#tokenized-logging) below.
+
+## Tokenized Logging
+
+This demo uses **pw_log_tokenized** instead of plain-text logging.  Every
+`PW_LOG_*` call stores only a 32-bit hash token in the firmware binary — the
+format string itself is stripped out at compile time.  At runtime, only the
+token plus varint-encoded arguments are transmitted, wrapped in a
+`$`-prefixed Base64 line.  The host-side tool looks the token up in a
+database extracted from the ELF and reconstructs the original message.
+
+### Why bother?
+
+| Approach | Flash cost per log site | UART bytes per message |
+|----------|------------------------|------------------------|
+| `printf` / `pw_log_basic` | ~40–200 B (string in flash) | ~40–80 B (ASCII) |
+| `pw_log_tokenized` | **4 B** (token only) | **8–16 B** (Base64) |
+
+On a 2 MB device this makes little practical difference, but it
+demonstrates the technique and the tooling end-to-end.
+
+### Wire format
+
+Each log message is one newline-terminated line on the UART:
+
+```
+$Qlqz/hM=
+```
+
+The payload inside the Base64 is `[ 4-byte LE token ][ varint args... ]`.
+The `$` prefix lets the detokenizer recognise tokenized lines even when
+mixed with other UART traffic.
+
+### Token database
+
+The CMake post-build step automatically extracts the token→string database
+from the ELF after every build and writes it next to the ELF:
+
+```
+build/debug/stm32f429i_demo.tokens.csv
+```
+
+To regenerate it manually:
+
+```bash
+# Linux / macOS
+PYTHONPATH=ext/pigweed/pw_tokenizer/py \
+python3 -m pw_tokenizer.database create \
+    --database build/debug/stm32f429i_demo.tokens.csv \
+    build/debug/stm32f429i_demo
+```
+
+```cmd
+:: Windows (cmd) – run from the repo root
+set PYTHONPATH=ext\pigweed\pw_tokenizer\py
+python -m pw_tokenizer.database create ^
+    --database build\debug\stm32f429i_demo.tokens.csv ^
+    build\debug\stm32f429i_demo
+```
+
+### Live decoding
+
+Install the only host-side dependency (once):
+
+```bash
+pip install pyserial
+```
+
+Find your COM port: on Windows open **Device Manager → Ports (COM & LPT)**
+and look for *STMicroelectronics STLink Virtual COM Port*.
+
+```bash
+# Linux / macOS
+PYTHONPATH=ext/pigweed/pw_tokenizer/py \
+python3 -m pw_tokenizer.serial_detokenizer \
+    --device /dev/ttyACM0 --baudrate 115200 \
+    build/debug/stm32f429i_demo.tokens.csv
+```
+
+```cmd
+:: Windows (cmd) – run from the repo root
+set PYTHONPATH=ext\pigweed\pw_tokenizer\py
+python -m pw_tokenizer.serial_detokenizer ^
+    --device COM4 --baudrate 115200 ^
+    build\debug\stm32f429i_demo.tokens.csv
+```
+
+You can also point the tool directly at the ELF to skip the CSV step:
+
+```bash
+PYTHONPATH=ext/pigweed/pw_tokenizer/py \
+python3 -m pw_tokenizer.serial_detokenizer \
+    --device /dev/ttyACM0 --baudrate 115200 \
+    build/debug/stm32f429i_demo
+```
+
+### Expected output
+
+```
+[DEMO] =========================================
+[DEMO]  STM32F429I-DISCO  modm + Pigweed + ETL
+[DEMO] =========================================
+[DEMO] System clock: 180000000 Hz
+[DEMO] ETL reading buffer capacity: 16
+[DEMO] --- Batch #1 (t=8000 ms) ---
+[DEMO]   t=500     raw=-49
+[DEMO]   t=1000    raw=-48
+...
+[DEMO] batch mean=-8  n=16
+```
+
 ## Project Structure
 
 ```
@@ -102,9 +215,11 @@ stm32demo/
 ├── toolchain/
 │   └── arm-none-eabi.cmake # cross-compilation toolchain file
 ├── src/
-│   ├── main.cpp            # application entry point
-│   ├── log_backend.cc      # pw_log_basic backend (UART1)
-│   └── assert_backend.cc   # pw_assert_basic backend (safe-halt)
+│   ├── main.cpp                  # application entry point
+│   ├── log_backend.cc            # pw_sys_io backend (WriteByte → UART1)
+│   ├── log_tokenized_handler.cc  # pw_log_tokenized handler ($-Base64 over UART)
+│   └── pw_assert_backend/
+│       └── assert_backend.cc     # pw_assert_basic backend (safe-halt)
 └── ext/
     ├── modm/               # git submodule – modm source + lbuild recipes
     └── pigweed/            # git submodule – Pigweed source
@@ -125,8 +240,10 @@ main.cpp
   ├── Usart1::initialize()          ← UART1 for log output
   │
   ├── pw_log (PW_LOG_INFO / PW_LOG_WARN / …)
-  │     └── pw_log_basic_HandleMessage()   in log_backend.cc
-  │           └── Usart1::write()           ← modm UART driver
+  │     └── PW_LOG_TOKENIZED_TO_GLOBAL_HANDLER_WITH_PAYLOAD macro
+  │           └── _pw_log_tokenized_EncodeTokenizedLog()   ← log_tokenized.cc
+  │                 └── pw_log_tokenized_HandleLog()        ← log_tokenized_handler.cc
+  │                       └── "$" + Base64(token+args) + "\n" → UART1
   │
   ├── pw_assert (PW_CHECK_OK)
   │     └── pw_assert_basic_HandleFailure() in assert_backend.cc
@@ -138,7 +255,7 @@ main.cpp
 
 ## Customising
 
-- **UART baud rate** – change `115200_Bd` in `main.cpp` and `log_backend.cc`.
+- **UART baud rate** – change `115200_Bd` in `main.cpp`; `log_tokenized_handler.cc` inherits the rate from the same UART instance.
 - **Log verbosity** – define `PW_LOG_LEVEL` in the target's compile options
   (e.g. `target_compile_definitions(… PRIVATE PW_LOG_LEVEL=PW_LOG_LEVEL_DEBUG)`).
 - **Additional modm modules** – add `<module>` entries to `lbuild.xml` and
