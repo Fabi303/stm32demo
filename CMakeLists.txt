@@ -371,6 +371,7 @@ set(PIGWEED_INCLUDE_DIRS
 
     # Modules
     "${PIGWEED_ROOT}/pw_assert/public"
+    "${PIGWEED_ROOT}/pw_build_info/public"
     "${PIGWEED_ROOT}/pw_containers/public"
     "${PIGWEED_ROOT}/pw_log/public"
     "${PIGWEED_ROOT}/pw_preprocessor/public"
@@ -401,6 +402,8 @@ add_library(pigweed_backends STATIC
     "${PIGWEED_ROOT}/pw_string/format.cc"
     # IntToHexString used by string_builder for byte/pointer formatting
     "${PIGWEED_ROOT}/pw_string/type_to_string.cc"
+    # pw_build_info: reads the GNU build ID from the .note.gnu.build-id ELF section.
+    "${PIGWEED_ROOT}/pw_build_info/build_id.cc"
 )
 target_include_directories(pigweed_backends PUBLIC ${PIGWEED_INCLUDE_DIRS})
 target_link_libraries(pigweed_backends PUBLIC modm)
@@ -423,8 +426,31 @@ endif()
 # ── 4. Application ────────────────────────────────────────────────────────────
 add_executable(${PROJECT_NAME} src/main.cpp)
 
-target_link_options(${PROJECT_NAME} PRIVATE 
+# ── Git metadata header (regenerated on every build) ─────────────────────────
+# cmake/GenGitInfo.cmake runs git at build time and writes:
+#   ${CMAKE_BINARY_DIR}/generated/git_info.h
+# with kCommit, kBranch, and kDirty constants. The header is included by
+# main.cpp to log repo state at boot alongside pw_build_info's binary build ID.
+set(_GIT_INFO_HEADER "${CMAKE_BINARY_DIR}/generated/git_info.h")
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+
+add_custom_target(gen_git_info
+    COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
+            -DOUTPUT_FILE=${_GIT_INFO_HEADER}
+            -P ${CMAKE_SOURCE_DIR}/cmake/GenGitInfo.cmake
+    BYPRODUCTS "${_GIT_INFO_HEADER}"
+    COMMENT "Capturing git metadata → git_info.h"
+)
+add_dependencies(${PROJECT_NAME} gen_git_info)
+target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_BINARY_DIR}/generated")
+
+target_link_options(${PROJECT_NAME} PRIVATE
     "-Wl,--allow-multiple-definition"
+    # Embed a SHA1 GNU build ID note (.note.gnu.build-id) in the ELF.
+    # pw_build_info::BuildId() reads it at runtime via the gnu_build_id_begin
+    # linker symbol defined in modm/link/linkerscript.ld.
+    "-Wl,--build-id=sha1"
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE 

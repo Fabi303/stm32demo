@@ -196,6 +196,9 @@ python3 -m pw_tokenizer.serial_detokenizer \
 [DEMO] =========================================
 [DEMO]  STM32F429I-DISCO  modm + Pigweed + ETL
 [DEMO] =========================================
+[DEMO] Build ID: a3f9c1e8b72d...
+[DEMO] Git:   40a38ab @ main
+[DEMO] Built: Feb 28 2026 14:23:07
 [DEMO] System clock: 180000000 Hz
 [DEMO] ETL reading buffer capacity: 16
 [DEMO] --- Batch #1 (t=8000 ms) ---
@@ -205,6 +208,22 @@ python3 -m pw_tokenizer.serial_detokenizer \
 [DEMO] batch mean=-8  n=16
 ```
 
+## Build Identity
+
+Every firmware image logs three pieces of build identity at boot, making it
+easy to correlate a running binary with its source and ELF file:
+
+| Log line | Source | Example |
+|----------|--------|---------|
+| `Build ID: <hex>` | GNU build ID embedded by the linker (`-Wl,--build-id=sha1`) and read at runtime via `pw_build_info::BuildId()` | `a3f9c1e8b72d…` (20-byte SHA1) |
+| `Git:   <commit>[-dirty] @ <branch>` | Captured at build time by `cmake/GenGitInfo.cmake` via `git rev-parse` / `git status` | `40a38ab-dirty @ main` |
+| `Built: <date> <time>` | Compiler built-ins `__DATE__` / `__TIME__` expanded when `main.cpp` is compiled | `Feb 28 2026 14:23:07` |
+
+The `-dirty` suffix appears when the working tree has uncommitted changes at
+build time.  The GNU build ID is deterministic for the same binary — two
+builds from the same source and toolchain produce the same ID, while any
+change (including a new commit) produces a different one.
+
 ## Project Structure
 
 ```
@@ -212,6 +231,8 @@ stm32demo/
 ├── CMakeLists.txt          # root build description
 ├── CMakePresets.json       # debug / release / minsizerel presets
 ├── lbuild.xml              # modm module selection for DISCO-F429ZI
+├── cmake/
+│   └── GenGitInfo.cmake    # build-time script: captures git metadata → git_info.h
 ├── toolchain/
 │   └── arm-none-eabi.cmake # cross-compilation toolchain file
 ├── src/

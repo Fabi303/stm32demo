@@ -20,8 +20,10 @@
 #define PW_LOG_TOKENIZED_FORMAT_STRING(module, message) "[" module "] " message
 #include "pw_log/log.h"
 #include "pw_assert/check.h"
+#include "pw_build_info/build_id.h"
 #include "pw_status/status.h"
 #include "pw_span/span.h"
+#include "git_info.h"
 
 // ── ETL ───────────────────────────────────────────────────────────────────────
 #include <etl/vector.h>
@@ -86,6 +88,34 @@ int main() {
     PW_LOG_INFO("=========================================");
     PW_LOG_INFO(" STM32F429I-DISCO  modm + Pigweed + ETL ");
     PW_LOG_INFO("=========================================");
+
+    // ── pw_build_info: log the GNU build ID (SHA1, 20 bytes) ────────────────
+    // The build ID is embedded by the linker (-Wl,--build-id=sha1) into the
+    // .note.gnu.build-id ELF section.  pw::build_info::BuildId() reads it at
+    // runtime via the gnu_build_id_begin linker symbol.  Each firmware image
+    // gets a unique ID, making it easy to match a running binary to its ELF.
+    {
+        const pw::span<const std::byte> bid = pw::build_info::BuildId();
+        // Format as a lowercase hex string without heap or printf("%x").
+        char hex[pw::build_info::kMaxBuildIdSizeBytes * 2 + 1] = {};
+        static constexpr char kNibble[] = "0123456789abcdef";
+        for (size_t i = 0; i < bid.size(); ++i) {
+            const auto b  = static_cast<uint8_t>(bid[i]);
+            hex[i * 2]     = kNibble[b >> 4];
+            hex[i * 2 + 1] = kNibble[b & 0x0F];
+        }
+        PW_LOG_INFO("Build ID: %s", hex);
+    }
+
+    // ── Git metadata and build timestamp ────────────────────────────────────
+    // kCommit / kBranch / kDirty are captured at build time by cmake/GenGitInfo.cmake.
+    // __DATE__ / __TIME__ are compiler built-ins expanded when main.cpp is compiled.
+    PW_LOG_INFO("Git:   %s%s @ %s",
+                git_info::kCommit,
+                git_info::kDirty ? "-dirty" : "",
+                git_info::kBranch);
+    PW_LOG_INFO("Built: %s %s", __DATE__, __TIME__);
+
     // Fix: %lu -> %u für Board-Frequenz
     PW_LOG_INFO("System clock: %u Hz", (unsigned int)Board::SystemClock::Frequency);
 
